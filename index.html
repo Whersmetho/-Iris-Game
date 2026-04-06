@@ -1,0 +1,551 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>Nuestra Historia</title>
+
+<style>
+body {
+    margin: 0;
+    overflow: hidden;
+    background-color: #1e1e1e;
+    font-family: Arial, sans-serif;
+}
+
+canvas {
+    display: block;
+    margin: 0 auto;
+    background-color: #2c2c2c;
+}
+
+#dialogueBox {
+    position: absolute;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    width: 80%;
+    padding: 15px;
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    border-radius: 10px;
+    display: none;
+}
+
+#dialogueOptions button {
+    margin: 5px;
+    padding: 8px;
+}
+
+#musicButton {
+    position: absolute;
+    top: 20px;
+    right: 20px;
+    padding: 10px;
+    background: #ff4081;
+    color: white;
+    border: none;
+    cursor: pointer;
+    border-radius: 5px;
+}
+</style>
+</head>
+
+<body>
+
+<canvas id="gameCanvas"></canvas>
+<button id="musicButton">🎵 Activar Música</button>
+
+<div id="dialogueBox">
+    <div id="dialogueText"></div>
+    <div id="dialogueOptions"></div>
+</div>
+
+<script>
+
+/* =========================================================
+   CONFIGURACIÓN
+========================================================= */
+const canvas = document.getElementById("gameCanvas");
+const ctx = canvas.getContext("2d");
+
+canvas.width = window.innerWidth;
+canvas.height = window.innerHeight;
+
+
+/* =========================================================
+   TRANSITION MANAGER (FADE)
+========================================================= */
+class TransitionManager {
+    constructor() {
+        this.alpha = 0;
+        this.fadeSpeed = 0.02;
+        this.isFadingOut = false;
+        this.isFadingIn = false;
+        this.onComplete = null;
+    }
+
+    fadeOut(callback) {
+        this.isFadingOut = true;
+        this.onComplete = callback;
+    }
+
+    fadeIn() {
+        this.isFadingIn = true;
+    }
+
+    update() {
+        if (this.isFadingOut) {
+            this.alpha += this.fadeSpeed;
+            if (this.alpha >= 1) {
+                this.alpha = 1;
+                this.isFadingOut = false;
+                if (this.onComplete) this.onComplete();
+                this.fadeIn();
+            }
+        }
+
+        if (this.isFadingIn) {
+            this.alpha -= this.fadeSpeed;
+            if (this.alpha <= 0) {
+                this.alpha = 0;
+                this.isFadingIn = false;
+            }
+        }
+    }
+
+    draw(ctx) {
+        if (this.alpha > 0) {
+            ctx.fillStyle = `rgba(0,0,0,${this.alpha})`;
+            ctx.fillRect(0, 0, canvas.width, canvas.height);
+        }
+    }
+}
+
+const transitionManager = new TransitionManager();
+
+
+/* =========================================================
+   AUDIO MANAGER
+========================================================= */
+class AudioManager {
+    constructor() {
+        this.music = new Audio("soundtrack.mp3");
+        this.music.loop = true;
+        this.music.volume = 0.3;
+        this.enabled = false;
+    }
+
+    playMusic() {
+        if (!this.enabled) {
+            this.music.play();
+            this.enabled = true;
+        }
+    }
+}
+
+const audioManager = new AudioManager();
+document.getElementById("musicButton").onclick = () => audioManager.playMusic();
+
+
+/* =========================================================
+   PLAYER
+========================================================= */
+class Player {
+    constructor(x, y) {
+        this.x = x;
+        this.y = y;
+        this.width = 40;
+        this.height = 40;
+        this.speed = 4;
+        this.moveTarget = null;
+
+        this.image = new Image();
+        this.image.src = "player.png";
+    }
+
+    draw(ctx) {
+        ctx.drawImage(this.image, this.x, this.y, this.width, this.height);
+    }
+
+    update() {
+        if (this.moveTarget) {
+            const dx = this.moveTarget.x - this.x;
+            const dy = this.moveTarget.y - this.y;
+            const dist = Math.sqrt(dx*dx + dy*dy);
+
+            if (dist > 1) {
+                this.x += (dx/dist) * this.speed;
+                this.y += (dy/dist) * this.speed;
+            } else {
+                this.moveTarget = null;
+            }
+        }
+    }
+
+    moveTo(x,y) {
+        this.moveTarget = {x,y};
+    }
+
+    isNear(obj) {
+        const dx = this.x - obj.x;
+        const dy = this.y - obj.y;
+        return Math.sqrt(dx*dx + dy*dy) < 60;
+    }
+}
+
+
+/* =========================================================
+   MEMORY OBJECT (CON ANIMACIÓN)
+========================================================= */
+class MemoryObject {
+    constructor(x,y,w,h,msg) {
+        this.x = x;
+        this.y = y;
+        this.width = w;
+        this.height = h;
+        this.message = msg;
+
+        this.image = new Image();
+        this.image.src = "flores.png";
+
+        this.time = Math.random() * 1000;
+    }
+
+    update() {
+        this.time += 0.05;
+    }
+
+    draw(ctx) {
+        const floatY = Math.sin(this.time) * 5;
+        ctx.drawImage(this.image, this.x, this.y + floatY, this.width, this.height);
+    }
+
+    isClicked(mx,my) {
+        return mx >= this.x && mx <= this.x+this.width &&
+               my >= this.y && my <= this.y+this.height;
+    }
+
+    interact(dialogueManager) {
+        dialogueManager.showMessage(this.message);
+    }
+}
+
+
+/* =========================================================
+   DIALOGUE MANAGER
+========================================================= */
+class DialogueManager {
+    constructor() {
+        this.box = document.getElementById("dialogueBox");
+        this.text = document.getElementById("dialogueText");
+        this.options = document.getElementById("dialogueOptions");
+        this.active = false;
+    }
+
+    showMessage(msg) {
+        this.active = true;
+        this.box.style.display = "block";
+        this.text.innerText = msg;
+        this.options.innerHTML = "";
+
+        const btn = document.createElement("button");
+        btn.innerText = "Continuar";
+        btn.onclick = () => this.hide();
+        this.options.appendChild(btn);
+    }
+
+    showQuestion(q, opts, correct, onCorrect) {
+        this.active = true;
+        this.box.style.display = "block";
+        this.text.innerText = q;
+        this.options.innerHTML = "";
+
+        opts.forEach(o=>{
+            const btn = document.createElement("button");
+            btn.innerText = o;
+
+            btn.onclick = ()=>{
+                if (o === correct) {
+                    this.showMessage("💖 Correcto...");
+                    onCorrect();
+                } else {
+                    this.showMessage("Intenta otra vez ❤️");
+                }
+            };
+
+            this.options.appendChild(btn);
+        });
+    }
+
+    hide() {
+        this.active = false;
+        this.box.style.display = "none";
+    }
+}
+
+
+/* =========================================================
+   SCENE BASE
+========================================================= */
+class Scene {
+    constructor(name) {
+        this.name = name;
+        this.background = null;
+    }
+
+    onEnter() {}
+    onExit() {}
+    update() {}
+    draw(ctx) {}
+    handleClick(x,y) {}
+}
+
+
+/* =========================================================
+   SCENE MANAGER (CON TRANSICIONES)
+========================================================= */
+class SceneManager {
+    constructor() {
+        this.currentScene = null;
+    }
+
+    changeScene(newScene) {
+        transitionManager.fadeOut(() => {
+            if (this.currentScene) this.currentScene.onExit();
+            this.currentScene = newScene;
+            this.currentScene.onEnter();
+        });
+    }
+
+    update() {
+        if (this.currentScene) this.currentScene.update();
+        transitionManager.update();
+    }
+
+    draw(ctx) {
+        if (this.currentScene) this.currentScene.draw(ctx);
+        transitionManager.draw(ctx);
+    }
+
+    handleClick(x,y) {
+        if (this.currentScene) this.currentScene.handleClick(x,y);
+    }
+}
+
+
+/* =========================================================
+   ESCENA 1
+========================================================= */
+class Scene_PrimeraCita extends Scene {
+    constructor(player, dialogueManager, sceneManager) {
+        super("PrimeraCita");
+
+        this.player = player;
+        this.dialogueManager = dialogueManager;
+        this.sceneManager = sceneManager;
+
+        this.memoryObjects = [];
+
+        this.background = new Image();
+        this.background.src = "fondo_cafe.png";
+    }
+
+    onEnter() {
+        this.memoryObjects = [
+            new MemoryObject(300,200,50,50,"Aquí empezó todo ❤️"),
+            new MemoryObject(500,300,50,50,"Ese café fue mágico ☕")
+        ];
+
+        this.player.x = 100;
+        this.player.y = 100;
+
+        setTimeout(()=>{
+            this.dialogueManager.showQuestion(
+                "¿Dónde fue nuestra primera cita?",
+                ["Cine","Parque","Café"],
+                "Café",
+                ()=>{
+                    this.sceneManager.changeScene(
+                        new Scene_DesafioDiario(this.player, this.dialogueManager, this.sceneManager)
+                    );
+                }
+            );
+        },3000);
+    }
+
+    update() {
+        this.player.update();
+        this.memoryObjects.forEach(o=>o.update());
+    }
+
+    draw(ctx) {
+        ctx.clearRect(0,0,canvas.width,canvas.height);
+        ctx.drawImage(this.background,0,0,canvas.width,canvas.height);
+
+        this.memoryObjects.forEach(o=>o.draw(ctx));
+        this.player.draw(ctx);
+    }
+
+    handleClick(mx,my) {
+        if (this.dialogueManager.active) return;
+
+        for (let o of this.memoryObjects) {
+            if (o.isClicked(mx,my) && this.player.isNear(o)) {
+                o.interact(this.dialogueManager);
+                return;
+            }
+        }
+
+        this.player.moveTo(mx,my);
+    }
+}
+
+
+/* =========================================================
+   OBSTACLE
+========================================================= */
+class Obstacle {
+    constructor(x,y,speed) {
+        this.x = x;
+        this.y = y;
+        this.radius = 20;
+        this.speed = speed;
+    }
+
+    update() {
+        this.y += this.speed;
+        if (this.y > canvas.height || this.y < 0) this.speed *= -1;
+    }
+
+    draw(ctx) {
+        ctx.beginPath();
+        ctx.fillStyle = "red";
+        ctx.arc(this.x,this.y,this.radius,0,Math.PI*2);
+        ctx.fill();
+    }
+
+    collides(player) {
+        const dx = player.x - this.x;
+        const dy = player.y - this.y;
+        return Math.sqrt(dx*dx + dy*dy) < this.radius + 20;
+    }
+}
+
+
+/* =========================================================
+   ESCENA 2
+========================================================= */
+class Scene_DesafioDiario extends Scene {
+    constructor(player, dialogueManager, sceneManager) {
+        super("Desafio");
+
+        this.player = player;
+        this.dialogueManager = dialogueManager;
+        this.sceneManager = sceneManager;
+
+        this.obstacles = [];
+        this.goal = null;
+
+        this.background = new Image();
+        this.background.src = "fondo_estres.png";
+    }
+
+    onEnter() {
+        this.player.x = 50;
+        this.player.y = canvas.height/2;
+
+        this.obstacles = [
+            new Obstacle(300,100,2),
+            new Obstacle(500,300,-3),
+            new Obstacle(700,200,2)
+        ];
+
+        this.goal = new MemoryObject(
+            canvas.width-100,
+            canvas.height/2,
+            60,60,
+            "Siempre superamos todo juntos ❤️"
+        );
+    }
+
+    update() {
+        this.player.update();
+        this.obstacles.forEach(o=>o.update());
+        this.goal.update();
+
+        for (let o of this.obstacles) {
+            if (o.collides(this.player)) {
+                this.player.x = 50;
+                this.player.y = canvas.height/2;
+            }
+        }
+    }
+
+    draw(ctx) {
+        ctx.clearRect(0,0,canvas.width,canvas.height);
+        ctx.drawImage(this.background,0,0,canvas.width,canvas.height);
+
+        this.obstacles.forEach(o=>o.draw(ctx));
+        this.goal.draw(ctx);
+        this.player.draw(ctx);
+    }
+
+    handleClick(mx,my) {
+        if (this.dialogueManager.active) return;
+
+        if (this.goal.isClicked(mx,my) && this.player.isNear(this.goal)) {
+            this.goal.interact(this.dialogueManager);
+
+            setTimeout(()=>{
+                this.sceneManager.changeScene(
+                    new Scene_PrimeraCita(this.player, this.dialogueManager, this.sceneManager)
+                );
+            },2000);
+
+            return;
+        }
+
+        this.player.moveTo(mx,my);
+    }
+}
+
+
+/* =========================================================
+   INIT
+========================================================= */
+const player = new Player(100,100);
+const dialogueManager = new DialogueManager();
+const sceneManager = new SceneManager();
+
+sceneManager.changeScene(
+    new Scene_PrimeraCita(player, dialogueManager, sceneManager)
+);
+
+
+/* =========================================================
+   INPUT
+========================================================= */
+canvas.addEventListener("click", e=>{
+    const rect = canvas.getBoundingClientRect();
+    const mx = e.clientX - rect.left;
+    const my = e.clientY - rect.top;
+
+    sceneManager.handleClick(mx,my);
+});
+
+
+/* =========================================================
+   LOOP
+========================================================= */
+function gameLoop() {
+    sceneManager.update();
+    sceneManager.draw(ctx);
+    requestAnimationFrame(gameLoop);
+}
+
+gameLoop();
+
+</script>
+
+</body>
+</html>
